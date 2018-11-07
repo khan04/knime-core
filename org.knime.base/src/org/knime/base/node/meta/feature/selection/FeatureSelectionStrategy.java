@@ -109,9 +109,9 @@ public interface FeatureSelectionStrategy {
     public String getNameForLastChange();
 
     /**
-     * @return the feature that was identified as best feature in the latest search round
+     * @return a list of features that were identified as the changed features in the last round
      */
-    public Integer getLastBestFeature();
+    public List<Integer> getLastChange();
 
     /**
      * @return the maximal number of iterations this strategy performs for the current configuration.

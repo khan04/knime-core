@@ -125,14 +125,13 @@ public class FeatureSelectionLoopStartNodeModel extends NodeModel implements Loo
                 final AbstractColumnHandler columnHandler =
                     new DefaultColumnHandler(Arrays.asList(constantColumns), inSpecs[0]);
                 final FeatureSelectionStrategy strategy =
-                    FeatureSelectionStrategies.createFeatureSelectionStrategy(m_settings.getSelectionStrategy(),
-                        m_settings.getNrFeaturesThreshold(), columnHandler.getAvailableFeatures());
+                    FeatureSelectionStrategies.createFeatureSelectionStrategy(m_settings, columnHandler.getAvailableFeatures());
                 m_featureSelector = new FeatureSelector(strategy, columnHandler);
                 // push max iterations flowvariable
                 m_maxIterations = m_featureSelector.getNumberOfIterations();
                 pushFlowVariableInt("maxIterations", m_maxIterations);
             } catch (Throwable t) {
-                throw new InvalidSettingsException("Exception during feature selector setup", t);
+                throw new InvalidSettingsException("Exception during feature selector setup: " + t.getMessage(), t);
             }
         }
 
