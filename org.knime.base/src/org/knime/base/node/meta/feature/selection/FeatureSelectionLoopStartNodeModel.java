@@ -225,6 +225,7 @@ public class FeatureSelectionLoopStartNodeModel extends NodeModel implements Loo
     @Override
     protected void reset() {
         m_iteration = 0;
+        m_featureSelector.reset();
     }
 
 }

@@ -4,7 +4,8 @@ Bundle-Name: KNIME Base Nodes
 Bundle-SymbolicName: org.knime.base;singleton:=true
 Bundle-Version: 3.7.0.qualifier
 Bundle-ClassPath: knime-base.jar,
-  lib/schemas.jar
+ lib/schemas.jar,
+ lib/jenetics-4.2.0.jar
 Bundle-Vendor: KNIME AG, Zurich, Switzerland
 Export-Package: org.knime.base.collection.list.split,
  org.knime.base.data.aggregation,

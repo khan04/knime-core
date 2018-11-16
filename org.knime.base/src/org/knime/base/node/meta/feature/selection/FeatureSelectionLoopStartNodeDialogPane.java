@@ -212,6 +212,21 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
             throw new InvalidSettingsException(
                 "All input columns are declared as constant. Please make at least one column non constant.");
         }
+        final int sizeIncludes = m_constantColumnsFilterPanel.getIncludeList().size();
+        if (m_strategyComboBox.getSelectedItem() == FeatureSelectionStrategies.Strategy.GeneticAlgorithm
+            && sizeIncludes < 2) {
+            throw new InvalidSettingsException(
+                "In order to use a genetic algorithm, at least two columns must be included!");
+        }
+        if (sizeIncludes < 1) {
+            throw new InvalidSettingsException("At least one column must be included!");
+        }
+        if (m_strategyComboBox.getSelectedItem() == FeatureSelectionStrategies.Strategy.GeneticAlgorithm
+            && (int)m_nrFeaturesThresholdSpinner.getValue() < 2) {
+            throw new InvalidSettingsException(
+                "In order to use a genetic algorithm, the threshold for number of features must not be smaller than 2!");
+        }
+
         m_constantColumnsFilterPanel.saveConfiguration(cfg.getStaticColumnsFilterConfiguration());
         cfg.setStrategy((Strategy)m_strategyComboBox.getSelectedItem());
         if (!m_useNrFeaturesThresholdCheckBox.isSelected()) {
@@ -277,14 +292,8 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
 
                 gbc.gridx = 0;
                 gbc.gridy++;
-                JLabel label = new JLabel("Max. number of generations");
-                label.setPreferredSize(new Dimension((int)label.getPreferredSize().getWidth() + 10,
-                    (int)label.getPreferredSize().getHeight()));
-                panel.add(label, gbc);
+                panel.add(new JLabel("Number of generations"), gbc);
                 gbc.gridx++;
-                m_maxNumGenerationsSpinner
-                    .setPreferredSize(new Dimension((int)m_maxNumGenerationsSpinner.getPreferredSize().getWidth() + 57,
-                        (int)m_maxNumGenerationsSpinner.getPreferredSize().getHeight()));
                 panel.add(m_maxNumGenerationsSpinner, gbc);
 
                 gbc.gridx = 0;
@@ -292,12 +301,6 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
                 panel.add(new JLabel("Selection strategy"), gbc);
                 gbc.gridx++;
                 panel.add(m_selectionStrategyComboBox, gbc);
-
-                gbc.gridx = 0;
-                gbc.gridy++;
-                panel.add(m_useRandomSeedCheckBox, gbc);
-                gbc.gridx++;
-                panel.add(m_randomSeedTextField, gbc);
 
                 gbc.gridx = 0;
                 gbc.gridy++;
@@ -323,6 +326,18 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
                 gbc.gridx++;
                 gbc.weightx = 1;
                 panel.add(m_elitismRateSpinner, gbc);
+
+                gbc.gridx = 0;
+                gbc.gridy++;
+                m_useRandomSeedCheckBox
+                    .setPreferredSize(new Dimension((int)m_useRandomSeedCheckBox.getPreferredSize().getWidth() + 83,
+                        (int)m_useRandomSeedCheckBox.getPreferredSize().getHeight()));
+                panel.add(m_useRandomSeedCheckBox, gbc);
+                gbc.gridx++;
+                m_randomSeedTextField
+                    .setPreferredSize(new Dimension((int)m_randomSeedTextField.getPreferredSize().getWidth() + 55,
+                        (int)m_randomSeedTextField.getPreferredSize().getHeight()));
+                panel.add(m_randomSeedTextField, gbc);
 
                 return panel;
             default:

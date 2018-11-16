@@ -102,7 +102,6 @@ public abstract class AbstractFeatureSelectionStrategy implements FeatureSelecti
      */
     protected abstract List<Integer> getIncluded();
 
-
     /**
      * @return true if the end of this search round is reached
      */
@@ -173,13 +172,13 @@ public abstract class AbstractFeatureSelectionStrategy implements FeatureSelecti
             m_currentBestFeature = getCurrentFeature();
         }
 
-//        if (reachedEndOfRound()) {
-//            handleBestFeature(m_currentBestFeature);
-//            List<Integer> included = getIncluded();
-//            m_shouldStop = included.size() == m_subsetSize || reachedEndOfSearch();
-//        } else {
-//            nextFeature();
-//        }
+        //        if (reachedEndOfRound()) {
+        //            handleBestFeature(m_currentBestFeature);
+        //            List<Integer> included = getIncluded();
+        //            m_shouldStop = included.size() == m_subsetSize || reachedEndOfSearch();
+        //        } else {
+        //            nextFeature();
+        //        }
 
     }
 
@@ -190,7 +189,6 @@ public abstract class AbstractFeatureSelectionStrategy implements FeatureSelecti
     public boolean continueLoop() {
         return !m_shouldStop;
     }
-
 
     /**
      * {@inheritDoc}
@@ -248,4 +246,12 @@ public abstract class AbstractFeatureSelectionStrategy implements FeatureSelecti
      * @return the number of iterations the strategy needs to reach <b>subsetSize</b>
      */
     protected abstract int calcNumIterations(int subsetSize, int numFeatures);
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void reset() {
+        // nothing to do
+    }
 }

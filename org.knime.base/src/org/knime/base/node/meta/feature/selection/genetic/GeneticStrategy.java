@@ -65,7 +65,6 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 import org.knime.base.node.meta.feature.selection.FeatureSelectionStrategy;
-import org.knime.core.node.InvalidSettingsException;
 
 import io.jenetics.BitChromosome;
 import io.jenetics.BitGene;
@@ -84,11 +83,13 @@ import io.jenetics.util.RandomRegistry;
  * Genetic Algorithm for Feature Selection. Uses the Jenetics library and runs a separate thread for the genetic
  * algorithm.
  *
+ * @see <a href="http://jenetics.io/">Jenetics</a>
+ *
  * @author Simon Schmid, KNIME, Austin, USA
  */
 public class GeneticStrategy implements FeatureSelectionStrategy {
 
-    private final int m_maxNumIterations;
+    private final int m_numIterations;
 
     private boolean m_isMinimize;
 
@@ -112,13 +113,15 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
 
     private Engine<BitGene, Double> m_engine;
 
+    private boolean m_isInterrupted = false;
+
     /**
      * Constructor. Starts the thread for the genetic algorithm already to be able to give an output of the first
      * selected features during configure.
      *
      * @param subSetSize max number of selected features, is <= 0 if undefined
      * @param popSize population size
-     * @param maxNumGenerations max number of generations
+     * @param numGenerations max number of generations
      * @param useSeed if seed should be used
      * @param seed the seed
      * @param crossoverRate the crossover rate
@@ -129,7 +132,7 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
      * @param features ids of the features
      *
      */
-    public GeneticStrategy(final int subSetSize, final int popSize, final int maxNumGenerations, final boolean useSeed,
+    public GeneticStrategy(final int subSetSize, final int popSize, final int numGenerations, final boolean useSeed,
         final long seed, final double crossoverRate, final double mutationRate, final double elitismRate,
         final SelectionStrategy selectionStrategy, final CrossoverStrategy crossoverStrategy,
         final List<Integer> features) {
@@ -138,7 +141,7 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
                 "To use a genetic algorithm, the number of features must be at least 2.");
         }
         // probably it's going to be less, this is just an upper bound
-        m_maxNumIterations = maxNumGenerations * popSize;
+        m_numIterations = numGenerations * popSize;
 
         final Random random;
         if (useSeed) {
@@ -188,12 +191,11 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
                     });
 
                     // 4.) Start the execution (evolution) and collect the result.
-                    EvolutionResult<BitGene, Double> result =
-                        RandomRegistry.with(new Random(random.nextLong()), f -> m_engine.stream()
-                            .limit(maxNumGenerations).collect(EvolutionResult.toBestEvolutionResult()));
+                    EvolutionResult<BitGene, Double> result = RandomRegistry.with(new Random(random.nextLong()),
+                        f -> m_engine.stream().limit(numGenerations).collect(EvolutionResult.toBestEvolutionResult()));
                     RandomRegistry.with(new Random(random.nextLong()),
                         f -> m_engine.stream(EvolutionStart.of(result.getPopulation(), result.getGeneration()))
-                            .limit(maxNumGenerations - 1).collect(EvolutionResult.toBestEvolutionResult()));
+                            .limit(numGenerations - 1).collect(EvolutionResult.toBestEvolutionResult()));
 
                     m_continueLoop = false;
                     m_continueWorkflowLoop = true;
@@ -257,7 +259,7 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
         m_continueWorkflowLoop = false;
 
         if (!m_continueLoop) {
-            m_executor.shutdown();
+            reset();
         }
         return m_continueLoop;
     }
@@ -359,7 +361,7 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
      */
     @Override
     public int getNumberOfIterations() {
-        return m_maxNumIterations;
+        return m_numIterations;
     }
 
     /**
@@ -369,6 +371,21 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
     public Integer getCurrentFeature() {
         // just needed for flow variables, this strategy does not have a current feature
         return -1;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void reset() {
+        // shut down executor
+        m_executor.shutdown();
+        // set flag to true
+        m_isInterrupted = true;
+        // signal thread to continue
+        m_lock.lock();
+        m_condScoreReceived.signal();
+        m_lock.unlock();
     }
 
     private final class Evaluator implements Function<Genotype<BitGene>, Double> {
@@ -387,6 +404,10 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
          */
         @Override
         public synchronized Double apply(final Genotype<BitGene> genotype) {
+            // if the node has been reseted, just return 0 to let the thread terminate
+            if (m_isInterrupted) {
+                return 0d;
+            }
             final int hashCode = genotype.get(0).as(BitChromosome.class).toBitSet().hashCode();
             // if the genotype has already been processed earlier, return the cached score
             if (m_scoreLookUp.containsKey(hashCode)) {
@@ -409,6 +430,10 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
             m_lock.lock();
             try {
                 while (!m_scoreReceived) {
+                    // if the node has been reseted, just return 0 to let the thread terminate
+                    if (m_isInterrupted) {
+                        return 0d;
+                    }
                     m_condScoreReceived.await();
                 }
             } catch (InterruptedException e) {

@@ -87,9 +87,9 @@ public class FeatureSelectionLoopStartSettings {
     // -1 stands for no threshold!
     private static final int DEF_NR_FEATURES_THRESHOLD = -1;
 
-    private static final int DEF_POP_SIZE = 10;
+    private static final int DEF_POP_SIZE = 15;
 
-    private static final int DEF_MAX_NUM_GENERATIONS = 8;
+    private static final int DEF_MAX_NUM_GENERATIONS = 10;
 
     private static final long DEF_RANDOM_SEED = System.currentTimeMillis();
 
