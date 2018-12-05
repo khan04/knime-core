@@ -116,9 +116,6 @@ public class FeatureSelectionLoopEndNodeModel extends NodeModel implements LoopE
 
         // first configure
         if (m_iteration == 0) {
-//            m_selectionStrategy = ((FeatureSelectionLoopStartNodeModel)getLoopStartNode()).getSelectionStrategy();
-//            m_selectionStrategy.setIsMinimize(m_settings.isMinimize());
-//            m_selectionStrategy.setScoreName(scoreVariableName);
             FeatureSelectionLoopStartNodeModel startNode = (FeatureSelectionLoopStartNodeModel)getLoopStartNode();
             m_featureSelector = startNode.getFeatureSelector();
             if (m_featureSelector == null) {

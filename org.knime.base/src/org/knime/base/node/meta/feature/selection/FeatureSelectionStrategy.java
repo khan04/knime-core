@@ -123,5 +123,7 @@ public interface FeatureSelectionStrategy {
      */
     public Integer getCurrentFeature();
 
-    public void reset();
+    public void finishRound();
+
+    public void onDispose();
 }

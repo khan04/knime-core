@@ -127,6 +127,8 @@ public class FeatureSelector {
                 m_resultTableContainer.addRowToTable(getRowForResultTable());
             }
         }
+
+        m_strategy.finishRound();
     }
 
     /**
@@ -248,8 +250,8 @@ public class FeatureSelector {
         return m_colHandler.getColumnNameFor(m_strategy.getCurrentFeature());
     }
 
-    public void reset() {
-        m_strategy.reset();
+    public void onDispose() {
+        m_strategy.onDispose();
     }
 
 }

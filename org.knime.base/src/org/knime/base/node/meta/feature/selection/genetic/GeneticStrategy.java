@@ -55,16 +55,16 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
 import org.knime.base.node.meta.feature.selection.FeatureSelectionStrategy;
+import org.knime.core.node.NodeLogger;
 
 import io.jenetics.BitChromosome;
 import io.jenetics.BitGene;
@@ -89,31 +89,29 @@ import io.jenetics.util.RandomRegistry;
  */
 public class GeneticStrategy implements FeatureSelectionStrategy {
 
+    private final NodeLogger m_logger = NodeLogger.getLogger(this.getClass());
+
     private final int m_numIterations;
 
     private boolean m_isMinimize;
 
     private boolean m_continueLoop = true;
 
-    private boolean m_continueWorkflowLoop;
-
     private final Evaluator m_evaluator = new Evaluator();
 
-    private final Lock m_lock = new ReentrantLock();
-
-    private final Condition m_condScoreReceived = m_lock.newCondition();
-
-    private final Condition m_condContinueLoop = m_lock.newCondition();
-
-    private final Condition m_condGAInitialized = m_lock.newCondition();
-
     private final ExecutorService m_executor;
-
-    private RuntimeException m_exception;
 
     private Engine<BitGene, Double> m_engine;
 
     private boolean m_isInterrupted = false;
+
+    private final BlockingQueue<Integer> m_queueGenotypeReadyToScore;
+
+    private final BlockingQueue<Integer> m_queueGenotypeRequested;
+
+    private final BlockingQueue<Integer> m_queueScoreReceived;
+
+    private static final Integer POISON_PILL = -1;
 
     /**
      * Constructor. Starts the thread for the genetic algorithm already to be able to give an output of the first
@@ -143,6 +141,17 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
         // probably it's going to be less, this is just an upper bound
         m_numIterations = numGenerations * popSize;
 
+        m_queueGenotypeReadyToScore = new ArrayBlockingQueue<>(1);
+        m_queueScoreReceived = new ArrayBlockingQueue<>(1);
+        m_queueGenotypeRequested = new ArrayBlockingQueue<>(1);
+        try {
+            //            System.out.println("Init; request...");
+            m_queueGenotypeRequested.put(0);
+            //            System.out.println("Init; requested");
+        } catch (InterruptedException e1) {
+            throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e1);
+        }
+
         final Random random;
         if (useSeed) {
             random = new Random(seed);
@@ -151,7 +160,10 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
         }
 
         /*
-         * This thread will run the genetic algorithm (ga) which will then run in parallel with the workflow thread. Those two threads will have to wait for each other. The workflow thread needs to wait for the ga thread to produce a feature subset to run and the ga thread needs to wait for the workflow loop to score this subset.
+         * This thread will run the genetic algorithm (GA) which will then run in parallel with the workflow thread.
+         * Those two threads will have to wait for each other. The workflow thread needs to wait for the GA thread
+         * to produce a feature subset to run and the GA thread needs to wait for the workflow loop to score this
+         * subset.
          */
         final Runnable runnable = new Runnable() {
 
@@ -197,19 +209,22 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
                         f -> m_engine.stream(EvolutionStart.of(result.getPopulation(), result.getGeneration()))
                             .limit(numGenerations - 1).collect(EvolutionResult.toBestEvolutionResult()));
 
+                    //                    System.out.println("GA finished; receive...");
+                    m_queueGenotypeRequested.take();
+                    //                    System.out.println("GA finished; received");
+                    //                    System.out.println("Wait GA finisihed; put false ReadyToScore...");
+                    m_queueGenotypeReadyToScore.put(0);
+                    //                    System.out.println("Done GA finisihed; put false ReadyToScore");
+
                     m_continueLoop = false;
-                    m_continueWorkflowLoop = true;
-                    m_lock.lock();
-                    m_condContinueLoop.signal();
-                    m_lock.unlock();
                 } catch (RuntimeException e) {
-                    // signal all potentially awaiting conditions, set an exception to throw
-                    m_executor.shutdown();
-                    m_exception = e;
-                    m_lock.lock();
-                    m_condContinueLoop.signal();
-                    m_condGAInitialized.signal();
-                    m_lock.unlock();
+                    // dispose the streaming thread, throw the exception
+                    onDispose();
+                    throw e;
+                } catch (InterruptedException e) {
+                    // dispose the streaming thread, throw the exception
+                    onDispose();
+                    throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e);
                 }
             }
         };
@@ -241,25 +256,8 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
      */
     @Override
     public boolean continueLoop() {
-        // wait until the genetic algorithm thread has selected the next feature subset
-        m_lock.lock();
-        try {
-            while (!m_continueWorkflowLoop) {
-                // if the genetic algorithm thread has been interrupted in some way, throw the exception
-                if (m_exception != null) {
-                    throw m_exception;
-                }
-                m_condContinueLoop.await();
-            }
-        } catch (InterruptedException e) {
-            // nothing to do
-        } finally {
-            m_lock.unlock();
-        }
-        m_continueWorkflowLoop = false;
-
         if (!m_continueLoop) {
-            reset();
+            onDispose();
         }
         return m_continueLoop;
     }
@@ -277,7 +275,16 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
      */
     @Override
     public void addScore(final double score) {
+        //        System.out.println(score);
         m_evaluator.setScore(score);
+
+        try {
+            //            System.out.println("set score " + score + " ...");
+            m_queueScoreReceived.put(0);
+            //            System.out.println("score " + score + " set");
+        } catch (InterruptedException e) {
+            throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e);
+        }
     }
 
     /**
@@ -348,12 +355,7 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
      */
     @Override
     public List<Integer> getLastChange() {
-        m_lock.lock();
-        final List<Integer> current = m_evaluator.getCurrent();
-        // this function is the last called function before a new round is started, therefore continue the genetic algorithm
-        m_condScoreReceived.signal();
-        m_lock.unlock();
-        return current;
+        return m_evaluator.getCurrent();
     }
 
     /**
@@ -377,15 +379,32 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
      * {@inheritDoc}
      */
     @Override
-    public void reset() {
+    public void finishRound() {
+        try {
+            //            System.out.println("Next; request...");
+            m_queueGenotypeRequested.put(0);
+            //            System.out.println("Next; requested");
+            //            System.out.println("-------------------");
+            //            System.out.println("Next; receive...");
+            m_queueGenotypeReadyToScore.take();
+            //            System.out.println("Next; received");
+        } catch (InterruptedException e) {
+            throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e);
+        }
+
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void onDispose() {
         // shut down executor
         m_executor.shutdown();
-        // set flag to true
-        m_isInterrupted = true;
-        // signal thread to continue
-        m_lock.lock();
-        m_condScoreReceived.signal();
-        m_lock.unlock();
+
+        // offer the running GA streaming thread a poison pill to finish it's computation
+        m_queueScoreReceived.offer(POISON_PILL);
+        m_queueGenotypeRequested.offer(POISON_PILL);
     }
 
     private final class Evaluator implements Function<Genotype<BitGene>, Double> {
@@ -393,62 +412,66 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
         // caches the scores of already scored feature subsets
         private final HashMap<Integer, Double> m_scoreLookUp = new HashMap<>();
 
-        private boolean m_scoreReceived;
-
-        private double m_score;
+        private Double m_score;
 
         private List<Integer> m_current;
+
+        private boolean m_isInitialized = false;
+
+        private final BlockingQueue<Boolean> queueIsInitialized = new ArrayBlockingQueue<>(1);
 
         /**
          * {@inheritDoc}
          */
         @Override
         public synchronized Double apply(final Genotype<BitGene> genotype) {
-            // if the node has been reseted, just return 0 to let the thread terminate
+            // if the running node has been reseted or disposed, simply return 0 to let the thread terminate quickly
             if (m_isInterrupted) {
                 return 0d;
             }
+
+            // If the same genotype has already been processed before, return the cached score.
+            // There is a small chance that a different genotype has the same hash code and gets labeled with the wrong
+            // score, but it will be altered sooner or later by the GA, i.e., it will not affect the results too much.
             final int hashCode = genotype.get(0).as(BitChromosome.class).toBitSet().hashCode();
-            // if the genotype has already been processed earlier, return the cached score
             if (m_scoreLookUp.containsKey(hashCode)) {
                 return m_scoreLookUp.get(hashCode);
             }
 
-            // a new feature subset needs to be scored, tell the Loop End node to continue the loop
-            m_lock.lock();
-            if (m_current != null) {
-                setCurrent(genotype);
-            } else {
-                setInitial(genotype);
-            }
-            m_continueWorkflowLoop = true;
-            m_condContinueLoop.signal();
-            m_lock.unlock();
-            m_scoreReceived = false;
-
-            // wait until the loop finishes and the score is received
-            m_lock.lock();
             try {
-                while (!m_scoreReceived) {
-                    // if the node has been reseted, just return 0 to let the thread terminate
-                    if (m_isInterrupted) {
-                        return 0d;
-                    }
-                    m_condScoreReceived.await();
+                //                System.out.println("Apply; wait for request...");
+                if (m_queueGenotypeRequested.take().equals(POISON_PILL)) {
+                    System.out.println("STOP THREAD 1");
+                    return stopAndReturn();
                 }
-            } catch (InterruptedException e) {
-                // nothing to do
-            } finally {
-                m_lock.unlock();
-            }
+                //                System.out.println("Apply; got request");
+                setCurrent(genotype);
+                //                System.out.println("Apply; give...");
+                m_queueGenotypeReadyToScore.put(0);
+                //                System.out.println("Apply; given");
+                queueIsInitialized.offer(true);
 
-            // cache the received score to speed up further computation
-            m_scoreLookUp.put(hashCode, m_score);
-            return m_score;
+                //                System.out.println("Apply; wait for score...");
+                if (m_queueScoreReceived.take().equals(POISON_PILL)) {
+                    System.out.println("STOP THREAD 2");
+                    return stopAndReturn();
+                }
+                //                System.out.println("Apply; score " + m_score + " received");
+                m_scoreLookUp.put(hashCode, m_score);
+                return m_score;
+            } catch (InterruptedException e) {
+                throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e);
+            }
+        }
+
+        private double stopAndReturn() {
+            // simply return 0 from now on to let the thread terminate quickly
+            m_isInterrupted = true;
+            return 0d;
         }
 
         private synchronized void setCurrent(final Genotype<BitGene> genotype) {
-            m_current.clear();
+            m_current = new ArrayList<>();
             for (int i = 0; i < genotype.getChromosome(0).length(); i++) {
                 if (genotype.getChromosome(0).getGene(i).booleanValue()) {
                     m_current.add(i);
@@ -456,44 +479,29 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
             }
         }
 
-        private synchronized void setInitial(final Genotype<BitGene> genotype) {
-            m_lock.lock();
-            if (m_current == null) {
-                m_current = new ArrayList<>();
-            }
-            setCurrent(genotype);
-            m_condGAInitialized.signal();
-            m_lock.unlock();
-        }
-
         /**
          * @return the currentGenotype
          */
         private List<Integer> getCurrent() {
-            if (m_current != null) {
-                return new ArrayList<>(m_current);
-            }
-
             // wait before the initial genotype is set before the Loop Start can ask for the first feature subset
-            m_lock.lock();
-            while (m_current == null) {
+            if (!m_isInitialized) {
                 try {
-                    if (m_exception != null) {
-                        throw m_exception;
-                    }
-                    m_condGAInitialized.await();
+                    queueIsInitialized.take();
+                    m_isInitialized = true;
+                    //                    System.out.println("Next; receive initial...");
+                    m_queueGenotypeReadyToScore.take();
+                    //                    System.out.println("Next; received initial");
                 } catch (InterruptedException e) {
-                    // nothing to do
+                    throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e);
                 }
             }
-            m_lock.unlock();
             return new ArrayList<>(m_current);
         }
 
         /**
          * @return the score
          */
-        public double getScore() {
+        private double getScore() {
             return m_score;
         }
 
@@ -502,7 +510,6 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
          */
         private void setScore(final double score) {
             m_score = score;
-            m_scoreReceived = true;
         }
 
     }

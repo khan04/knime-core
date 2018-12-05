@@ -82,12 +82,11 @@ public class FeatureSelectionLoopStartNodeModel extends NodeModel implements Loo
 
     /**
      * @param nrPorts the number of in ports
-    *
+     *
      */
     public FeatureSelectionLoopStartNodeModel(final int nrPorts) {
         super(nrPorts, nrPorts);
     }
-
 
     /**
      * {@inheritDoc}
@@ -105,7 +104,8 @@ public class FeatureSelectionLoopStartNodeModel extends NodeModel implements Loo
         final String[] constantColumns;
         // check if no feature columns are selected (e.g. before the dialog is opened the first time)
         if (filterResult.getIncludes().length == 0) {
-            throw new InvalidSettingsException("No feature columns selected. Please specify the feature columns in the dialog.");
+            throw new InvalidSettingsException(
+                "No feature columns selected. Please specify the feature columns in the dialog.");
         }
 
         if (filterResult.getExcludes().length == 0) {
@@ -124,8 +124,8 @@ public class FeatureSelectionLoopStartNodeModel extends NodeModel implements Loo
             try {
                 final AbstractColumnHandler columnHandler =
                     new DefaultColumnHandler(Arrays.asList(constantColumns), inSpecs[0]);
-                final FeatureSelectionStrategy strategy =
-                    FeatureSelectionStrategies.createFeatureSelectionStrategy(m_settings, columnHandler.getAvailableFeatures());
+                final FeatureSelectionStrategy strategy = FeatureSelectionStrategies
+                    .createFeatureSelectionStrategy(m_settings, columnHandler.getAvailableFeatures());
                 m_featureSelector = new FeatureSelector(strategy, columnHandler);
                 // push max iterations flowvariable
                 m_maxIterations = m_featureSelector.getNumberOfIterations();
@@ -162,8 +162,6 @@ public class FeatureSelectionLoopStartNodeModel extends NodeModel implements Loo
 
         return m_featureSelector.getNextTables(exec, inData);
     }
-
-
 
     FeatureSelector getFeatureSelector() {
         return m_featureSelector;
@@ -225,7 +223,19 @@ public class FeatureSelectionLoopStartNodeModel extends NodeModel implements Loo
     @Override
     protected void reset() {
         m_iteration = 0;
-        m_featureSelector.reset();
+        if (m_featureSelector != null) {
+            m_featureSelector.onDispose();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    protected void onDispose() {
+        if (m_featureSelector != null) {
+            m_featureSelector.onDispose();
+        }
     }
 
 }

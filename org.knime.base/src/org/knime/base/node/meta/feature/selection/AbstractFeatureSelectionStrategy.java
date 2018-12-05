@@ -251,7 +251,15 @@ public abstract class AbstractFeatureSelectionStrategy implements FeatureSelecti
      * {@inheritDoc}
      */
     @Override
-    public void reset() {
+    public void onDispose() {
+        // nothing to do
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void finishRound() {
         // nothing to do
     }
 }
