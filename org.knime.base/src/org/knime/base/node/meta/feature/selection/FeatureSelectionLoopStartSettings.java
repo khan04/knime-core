@@ -62,11 +62,25 @@ import org.knime.core.node.util.filter.column.DataTypeColumnFilter;
 /**
  *
  * @author Adrian Nembach, KNIME.com
+ * @author Simon Schmid, KNIME, Austin, USA
  */
 public class FeatureSelectionLoopStartSettings {
+
+    // ===== Config keys =====
+
+    // General
+
     private static final String CFG_CONSTANT_COLUMNS_FILTER_CONFIG = "constantColumnsFilterConfig";
 
+    // Sequential Algorithm
+
     private static final String CFG_NR_FEATURES_THRESHOLD = "nrFeatureThreshold";
+
+    // Genetic Algorithm
+
+    private static final String CFG_NR_FEATURES_LOWER_BOUND = "nrFeatureLowerBound";
+
+    private static final String CFG_NR_FEATURES_UPPER_BOUND = "nrFeatureUpperBound";
 
     private static final String CFG_POP_SIZE = "popSize";
 
@@ -82,10 +96,24 @@ public class FeatureSelectionLoopStartSettings {
 
     private static final String CFG_ELITISM_RATE = "elitismRate";
 
+    // ===== Default values =====
+
+    // General
+
     private static final Strategy DEF_STRATEGY = Strategy.ForwardFeatureSelection;
+
+    // Sequential Algorithm
 
     // -1 stands for no threshold!
     private static final int DEF_NR_FEATURES_THRESHOLD = -1;
+
+    // Genetic Algorithm
+
+    // -1 stands for no lower bound!
+    private static final int DEF_NR_FEATURES_LOWER_BOUND = -1;
+
+    // -1 stands for no upper bound!
+    private static final int DEF_NR_FEATURES_UPPER_BOUND = -1;
 
     private static final int DEF_POP_SIZE = 15;
 
@@ -105,9 +133,21 @@ public class FeatureSelectionLoopStartSettings {
 
     private static final SelectionStrategy DEF_SELECTION_STRATEGY = SelectionStrategy.TOURNAMENT_SELECTION;
 
+    // ===== Variables =====
+
+    // General
+
     private Strategy m_strategy = DEF_STRATEGY;
 
+    // Sequential Algorithm
+
     private int m_nrFeaturesThreshold = DEF_NR_FEATURES_THRESHOLD;
+
+    // Genetic Algorithm
+
+    private int m_nrFeaturesLowerBound = DEF_NR_FEATURES_LOWER_BOUND;
+
+    private int m_nrFeaturesUpperBound = DEF_NR_FEATURES_UPPER_BOUND;
 
     private int m_popSize = DEF_POP_SIZE;
 
@@ -173,6 +213,48 @@ public class FeatureSelectionLoopStartSettings {
      */
     public void setStrategy(final Strategy strategy) {
         m_strategy = strategy;
+    }
+
+    /**
+     * @return the nrFeaturesLowerBound
+     */
+    public int getNrFeaturesLowerBound() {
+        return m_nrFeaturesLowerBound;
+    }
+
+    /**
+     * @param nrFeaturesLowerBound the nrFeaturesLowerBound to set
+     */
+    public void setNrFeaturesLowerBound(final int nrFeaturesLowerBound) {
+        m_nrFeaturesLowerBound = nrFeaturesLowerBound;
+    }
+
+    /**
+     * @return true if a lower bound for the number of features is set
+     */
+    public boolean useNrFeaturesLowerBound() {
+        return m_nrFeaturesLowerBound >= 0;
+    }
+
+    /**
+     * @return the nrFeaturesUpperBound
+     */
+    public int getNrFeaturesUpperBound() {
+        return m_nrFeaturesUpperBound;
+    }
+
+    /**
+     * @param nrFeaturesUpperBound the nrFeaturesUpperBound to set
+     */
+    public void setNrFeaturesUpperBound(final int nrFeaturesUpperBound) {
+        m_nrFeaturesUpperBound = nrFeaturesUpperBound;
+    }
+
+    /**
+     * @return true if a upper bound for the number of features is set
+     */
+    public boolean useNrFeaturesUpperBound() {
+        return m_nrFeaturesUpperBound >= 0;
     }
 
     /**
@@ -312,6 +394,8 @@ public class FeatureSelectionLoopStartSettings {
         m_selectionStrategy.save(settings);
         m_constantColumnsFilterConfig.saveConfiguration(settings);
         settings.addInt(CFG_NR_FEATURES_THRESHOLD, m_nrFeaturesThreshold);
+        settings.addInt(CFG_NR_FEATURES_LOWER_BOUND, m_nrFeaturesLowerBound);
+        settings.addInt(CFG_NR_FEATURES_UPPER_BOUND, m_nrFeaturesUpperBound);
         settings.addInt(CFG_POP_SIZE, m_popSize);
         settings.addInt(CFG_MAX_NUM_GENERATIONS, m_maxNumGenerations);
         settings.addBoolean(CFG_USE_RANDOM_SEED, m_useRandomSeed);
@@ -345,6 +429,8 @@ public class FeatureSelectionLoopStartSettings {
         }
         m_constantColumnsFilterConfig.loadConfigurationInDialog(settings, spec);
         m_nrFeaturesThreshold = settings.getInt(CFG_NR_FEATURES_THRESHOLD, DEF_NR_FEATURES_THRESHOLD);
+        m_nrFeaturesLowerBound = settings.getInt(CFG_NR_FEATURES_LOWER_BOUND, DEF_NR_FEATURES_LOWER_BOUND);
+        m_nrFeaturesUpperBound = settings.getInt(CFG_NR_FEATURES_UPPER_BOUND, DEF_NR_FEATURES_UPPER_BOUND);
         m_popSize = settings.getInt(CFG_POP_SIZE, DEF_POP_SIZE);
         m_maxNumGenerations = settings.getInt(CFG_MAX_NUM_GENERATIONS, DEF_MAX_NUM_GENERATIONS);
         m_useRandomSeed = settings.getBoolean(CFG_USE_RANDOM_SEED, DEF_USE_RANODM_SEED);
@@ -364,8 +450,11 @@ public class FeatureSelectionLoopStartSettings {
         m_strategy = Strategy.load(settings);
         m_crossoverStrategy = CrossoverStrategy.load(settings);
         m_selectionStrategy = SelectionStrategy.load(settings);
+
         m_constantColumnsFilterConfig.loadConfigurationInModel(settings);
         m_nrFeaturesThreshold = settings.getInt(CFG_NR_FEATURES_THRESHOLD);
+        m_nrFeaturesLowerBound = settings.getInt(CFG_NR_FEATURES_LOWER_BOUND);
+        m_nrFeaturesUpperBound = settings.getInt(CFG_NR_FEATURES_UPPER_BOUND);
         m_popSize = settings.getInt(CFG_POP_SIZE);
         m_maxNumGenerations = settings.getInt(CFG_MAX_NUM_GENERATIONS);
         m_useRandomSeed = settings.getBoolean(CFG_USE_RANDOM_SEED);

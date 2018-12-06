@@ -64,7 +64,6 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 import org.knime.base.node.meta.feature.selection.FeatureSelectionStrategy;
-import org.knime.core.node.NodeLogger;
 
 import io.jenetics.BitChromosome;
 import io.jenetics.BitGene;
@@ -88,8 +87,6 @@ import io.jenetics.util.RandomRegistry;
  * @author Simon Schmid, KNIME, Austin, USA
  */
 public class GeneticStrategy implements FeatureSelectionStrategy {
-
-    private final NodeLogger m_logger = NodeLogger.getLogger(this.getClass());
 
     private final int m_numIterations;
 
@@ -130,13 +127,21 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
      * @param features ids of the features
      *
      */
-    public GeneticStrategy(final int subSetSize, final int popSize, final int numGenerations, final boolean useSeed,
-        final long seed, final double crossoverRate, final double mutationRate, final double elitismRate,
-        final SelectionStrategy selectionStrategy, final CrossoverStrategy crossoverStrategy,
-        final List<Integer> features) {
-        if (features.size() < 2) {
+    public GeneticStrategy(final int subsetLowerBound, final int subsetUpperBound, final int popSize,
+        final int numGenerations, final boolean useSeed, final long seed, final double crossoverRate,
+        final double mutationRate, final double elitismRate, final SelectionStrategy selectionStrategy,
+        final CrossoverStrategy crossoverStrategy, final List<Integer> features) {
+        //        if (features.size() < 2) {
+        //            throw new IllegalArgumentException(
+        //                "In order to use a genetic algorithm, the number of features must be at least 2.");
+        //        }
+        if (subsetLowerBound > 0 && subsetUpperBound > 0 && subsetLowerBound > subsetUpperBound) {
             throw new IllegalArgumentException(
-                "To use a genetic algorithm, the number of features must be at least 2.");
+                "The lower bound of number of features must not be greater than the upper bound!");
+        }
+        if (subsetLowerBound > features.size()) {
+            throw new IllegalArgumentException(
+                "The lower bound of number of features must not be greater than the actual number of features!");
         }
         // probably it's going to be less, this is just an upper bound
         m_numIterations = numGenerations * popSize;
@@ -171,22 +176,24 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
             public void run() {
                 try {
                     // 1.) Define the genotype (factory) suitable for the problem.
-                    final double probOfTrues;
-                    if (subSetSize <= 0) {
-                        probOfTrues = 0.5;
-                    } else {
-                        // set it to get subsets of approximately the half size of the max size
-                        probOfTrues = ((double)Math.min(subSetSize, features.size()) / 2) / features.size();
-                    }
+                    final double probOfTrues =
+                        getInitializationProbability(subsetLowerBound, subsetUpperBound, features.size());
                     final Factory<Genotype<BitGene>> gtf = Genotype.of(BitChromosome.of(features.size(), probOfTrues));
 
                     // 2.) Define a validator for the genotype which ensures the maximal number of selected features.
                     final Predicate<? super Genotype<BitGene>> validator = gt -> {
                         final int bitCount = gt.get(0).as(BitChromosome.class).bitCount();
-                        if (subSetSize <= 0) {
+                        if (subsetLowerBound <= 0 && subsetUpperBound <= 0) {
                             return bitCount > 1;
                         }
-                        return bitCount > 1 && bitCount <= subSetSize;
+                        if (subsetLowerBound > 0 && subsetUpperBound > 0) {
+                            return bitCount >= subsetLowerBound && bitCount <= subsetUpperBound;
+                        }
+                        if (subsetLowerBound > 0) {
+                            return bitCount >= subsetLowerBound;
+                        }
+                        // subsetUpperBound > 0
+                        return bitCount <= subsetUpperBound;
                     };
 
                     // 3.) Create the execution environment.
@@ -249,6 +256,24 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
             selector = nonElitistSelector;
         }
         return selector;
+    }
+
+    private double getInitializationProbability(final int subsetLowerBound, final int subsetUpperBound,
+        final int numFeatures) {
+        final int subsetSize;
+        if (subsetLowerBound <= 0 && subsetUpperBound <= 0) {
+            return 0.5;
+        } else {
+            if (subsetLowerBound <= 0 && subsetUpperBound > 0) {
+                subsetSize = numFeatures + subsetLowerBound;
+            } else if (subsetLowerBound > 0 && subsetUpperBound <= 0) {
+                subsetSize = subsetUpperBound;
+            } else {
+                subsetSize = subsetLowerBound + subsetUpperBound;
+            }
+            // set it to get subsets of approximately the half size of the max size
+            return (subsetSize / 2) / numFeatures;
+        }
     }
 
     /**

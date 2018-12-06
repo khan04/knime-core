@@ -42,8 +42,7 @@
 			<option name="Feature selection strategy">
 				Here you can choose between the selection strategies: Forward
 				Feature Selection, Backward Feature Elimination, and
-				<a href="https://en.wikipedia.org/wiki/Genetic_algorithm">Genetic Algorithm</a>
-				.
+				<a href="https://en.wikipedia.org/wiki/Genetic_algorithm">Genetic Algorithm</a>.
 			</option>
 			<option name="Use threshold for number of features">
 				Check this option if you want to set a bound for

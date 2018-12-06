@@ -71,30 +71,40 @@ public class FeatureSelectionStrategies {
              * Forward Feature Selection. Starts from an empty set and iteratively adds the feature that provides the
              * best gain
              */
-            ForwardFeatureSelection("Forward Feature Selection", (byte)0),
+            ForwardFeatureSelection("Forward Feature Selection", StrategyType.Sequential, (byte)0),
             /**
              * Backward Feature Elimination. Starts from the full set and iteratively removes the feature whose removal
              * yields the smallest loss.
              */
-            BackwardFeatureElimination("Backward Feature Elimination", (byte)1),
+            BackwardFeatureElimination("Backward Feature Elimination", StrategyType.Sequential, (byte)1),
             /**
              * Genetic Algorithm for Feature Selection. Binary chromosomes represent which features to include and which
              * to exclude.
              */
-            GeneticAlgorithm("Genetic Algorithm", (byte)2);
+            GeneticAlgorithm("Genetic Algorithm", StrategyType.Genetic, (byte)2);
 
         private final String m_string;
 
+        private final StrategyType m_type;
+
         private final byte m_persistByte;
 
-        private Strategy(final String name, final byte persistByte) {
+        private Strategy(final String name, final StrategyType type, final byte persistByte) {
             m_string = name;
+            m_type = type;
             m_persistByte = persistByte;
         }
 
         @Override
         public String toString() {
             return m_string;
+        }
+
+        /**
+         * @return the type of the strategy
+         */
+        public StrategyType getType() {
+            return m_type;
         }
 
         /**
@@ -141,12 +151,47 @@ public class FeatureSelectionStrategies {
             case BackwardFeatureElimination:
                 return new FBSStrategy(settings.getNrFeaturesThreshold(), featureColumns);
             case GeneticAlgorithm:
-                return new GeneticStrategy(settings.getNrFeaturesThreshold(), settings.getPopSize(),
-                    settings.getMaxNumGenerations(), settings.isUseRandomSeed(), settings.getRandomSeed(),
-                    settings.getCrossoverRate(), settings.getMutationRate(), settings.getElitismRate(),
-                    settings.getSelectionStrategy(), settings.getCrossoverStrategy(), featureColumns);
+                return new GeneticStrategy(settings.getNrFeaturesLowerBound(), settings.getNrFeaturesUpperBound(),
+                    settings.getPopSize(), settings.getMaxNumGenerations(), settings.isUseRandomSeed(),
+                    settings.getRandomSeed(), settings.getCrossoverRate(), settings.getMutationRate(),
+                    settings.getElitismRate(), settings.getSelectionStrategy(), settings.getCrossoverStrategy(),
+                    featureColumns);
             default:
                 throw new IllegalArgumentException("The FeatureSelectionStrategy \"" + strategy + "\" is unknown.");
+        }
+    }
+
+    /**
+     * The type of a {@link Strategy}. Each strategy type has to define its dialog pane (in
+     * {@link FeatureSelectionLoopStartNodeDialogPane}) specifying the specific strategy settings.
+     *
+     * @author Simon Schmid, KNIME, Austin, USA
+     */
+    public enum StrategyType {
+
+            /**
+             * FFS and BFE
+             */
+            Sequential("Sequential Algorithm Settings"),
+            /**
+             * Genetic Algorithm
+             */
+            Genetic("Genetic Algorithm Settings");
+
+        private final String m_dialogPanelTitle;
+
+        /**
+         *
+         */
+        private StrategyType(final String dialogPanelTitle) {
+            m_dialogPanelTitle = dialogPanelTitle;
+        }
+
+        /**
+         * @return dialog panel title
+         */
+        public String getDialogPanelTitle() {
+            return m_dialogPanelTitle;
         }
     }
 

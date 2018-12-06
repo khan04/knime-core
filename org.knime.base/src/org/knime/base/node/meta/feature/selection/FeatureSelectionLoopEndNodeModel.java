@@ -67,6 +67,7 @@ import org.knime.core.node.port.PortType;
 import org.knime.core.node.port.flowvariable.FlowVariablePortObject;
 import org.knime.core.node.workflow.FlowVariable;
 import org.knime.core.node.workflow.LoopEndNode;
+import org.knime.core.node.workflow.LoopStartNode;
 
 /**
  *
@@ -116,8 +117,12 @@ public class FeatureSelectionLoopEndNodeModel extends NodeModel implements LoopE
 
         // first configure
         if (m_iteration == 0) {
-            FeatureSelectionLoopStartNodeModel startNode = (FeatureSelectionLoopStartNodeModel)getLoopStartNode();
-            m_featureSelector = startNode.getFeatureSelector();
+            LoopStartNode loopStartNode = getLoopStartNode();
+            if (!(loopStartNode instanceof FeatureSelectionLoopStartNodeModel)) {
+                throw new InvalidSettingsException("Corresponding 'Feature Selection Loop Start' node is missing!");
+            }
+            FeatureSelectionLoopStartNodeModel featureSelectionStartNode = (FeatureSelectionLoopStartNodeModel)loopStartNode;
+            m_featureSelector = featureSelectionStartNode.getFeatureSelector();
             if (m_featureSelector == null) {
                 return null;
             }
