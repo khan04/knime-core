@@ -49,8 +49,6 @@
 package org.knime.base.node.meta.feature.selection;
 
 import java.awt.CardLayout;
-import java.awt.Component;
-import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -117,9 +115,15 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
 
     private final JTextField m_randomSeedTextField;
 
+    private final JCheckBox m_useEarlyStopping;
+
+    private final JSpinner m_earlyStoppingNumGenerations;
+
     private final JComboBox<CrossoverStrategy> m_crossoverStrategyComboBox;
 
     private final JComboBox<SelectionStrategy> m_selectionStrategyComboBox;
+
+    private final JSpinner m_survivorsFractionSpinner;
 
     private final JSpinner m_crossoverRateSpinner;
 
@@ -145,24 +149,27 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
         });
         m_useNrFeaturesThresholdCheckBox.doClick();
         m_useNrFeaturesLowerBoundCheckBox = new JCheckBox("Use lower bound for number of features");
-        m_nrFeaturesLowerBoundSpinner = new JSpinner(new SpinnerNumberModel(10, 1, Integer.MAX_VALUE, 1));
+        m_nrFeaturesLowerBoundSpinner = new JSpinner(new SpinnerNumberModel(2, 2, Integer.MAX_VALUE, 1));
         m_useNrFeaturesLowerBoundCheckBox.addChangeListener(
             l -> m_nrFeaturesLowerBoundSpinner.setEnabled(m_useNrFeaturesLowerBoundCheckBox.isSelected()));
         m_nrFeaturesLowerBoundSpinner.setEnabled(m_useNrFeaturesLowerBoundCheckBox.isSelected());
         m_useNrFeaturesUpperBoundCheckBox = new JCheckBox("Use upper bound for number of features");
-        m_nrFeaturesUpperBoundSpinner = new JSpinner(new SpinnerNumberModel(30, 1, Integer.MAX_VALUE, 1));
+        m_nrFeaturesUpperBoundSpinner = new JSpinner(new SpinnerNumberModel(20, 1, Integer.MAX_VALUE, 1));
         m_useNrFeaturesUpperBoundCheckBox.addChangeListener(
             l -> m_nrFeaturesUpperBoundSpinner.setEnabled(m_useNrFeaturesUpperBoundCheckBox.isSelected()));
         m_nrFeaturesUpperBoundSpinner.setEnabled(m_useNrFeaturesUpperBoundCheckBox.isSelected());
         m_popSizeSpinner = new JSpinner(new SpinnerNumberModel(10, 2, Integer.MAX_VALUE, 1));
         m_maxNumGenerationsSpinner = new JSpinner(new SpinnerNumberModel(10, 1, Integer.MAX_VALUE, 1));
         m_selectionStrategyComboBox = new JComboBox<>(SelectionStrategy.values());
+        m_survivorsFractionSpinner = new JSpinner(new SpinnerNumberModel(0.4, 0.0, 1.0, 0.1));
         m_useRandomSeedCheckBox = new JCheckBox("Use static random seed");
         m_randomSeedTextField = new JTextField(10);
         m_randomSeedTextField.setEnabled(m_useRandomSeedCheckBox.isSelected());
         m_randomSeedTextField.setText(Long.toString(System.currentTimeMillis()));
         m_useRandomSeedCheckBox
             .addChangeListener(l -> m_randomSeedTextField.setEnabled(m_useRandomSeedCheckBox.isSelected()));
+        m_useEarlyStopping = new JCheckBox("Enable early stopping", true);
+        m_earlyStoppingNumGenerations = new JSpinner(new SpinnerNumberModel(3, 1, Integer.MAX_VALUE, 1));
         m_crossoverStrategyComboBox = new JComboBox<>(CrossoverStrategy.values());
         m_crossoverRateSpinner = new JSpinner(new SpinnerNumberModel(0.6, 0.0, 1.0, 0.1));
         m_mutationRateSpinner = new JSpinner(new SpinnerNumberModel(0.1, 0.0, 1.0, 0.1));
@@ -172,6 +179,8 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
     }
 
     private void layout() {
+        // === Options Tab ===
+
         JPanel panel = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 5, 5, 5);
@@ -201,7 +210,7 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
         gbc.fill = GridBagConstraints.NONE;
         panel.add(m_strategyComboBox, gbc);
 
-        final CardLayout cardLayout = new AdjustingSizesCardLayout();
+        final CardLayout cardLayout = new CardLayout();
         final JPanel panelSettings = new JPanel(cardLayout);
         for (final StrategyType strategyType : StrategyType.values()) {
             panelSettings.add(getSettingsPanel(strategyType), strategyType.toString());
@@ -211,11 +220,27 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
         gbc.gridwidth = GridBagConstraints.REMAINDER;
         gbc.weightx = 1;
         panel.add(panelSettings, gbc);
-        m_strategyComboBox.addActionListener(
-            l -> cardLayout.show(panelSettings, ((Strategy)m_strategyComboBox.getSelectedItem()).getType().toString()));
-        gbc.gridwidth = 1;
 
         addTab("Options", panel);
+
+        // === Advanced Tab ===
+
+        final CardLayout cardLayoutAdvanced = new CardLayout();
+        final JPanel panelSettingsAdvanced = new JPanel(cardLayoutAdvanced);
+        for (final StrategyType strategyType : StrategyType.values()) {
+            panelSettingsAdvanced.add(getAdvancedSettingsPanel(strategyType), strategyType.toString());
+        }
+
+        final String tabAdvancedTitle = "Advanced";
+        addTab(tabAdvancedTitle, panelSettingsAdvanced);
+
+        // === Action Listeners ===
+        m_strategyComboBox.addActionListener(l -> {
+            cardLayout.show(panelSettings, ((Strategy)m_strategyComboBox.getSelectedItem()).getType().toString());
+            cardLayoutAdvanced.show(panelSettingsAdvanced,
+                ((Strategy)m_strategyComboBox.getSelectedItem()).getType().toString());
+            setEnabled(((Strategy)m_strategyComboBox.getSelectedItem()).getType().hasAdvancedSettings(), "Advanced");
+        });
     }
 
     /**
@@ -252,10 +277,12 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
             m_useNrFeaturesLowerBoundCheckBox.isSelected() ? (int)m_nrFeaturesLowerBoundSpinner.getValue() : -1);
         cfg.setNrFeaturesUpperBound(
             m_useNrFeaturesUpperBoundCheckBox.isSelected() ? (int)m_nrFeaturesUpperBoundSpinner.getValue() : -1);
+        cfg.setEarlyStopping(m_useEarlyStopping.isSelected() ? (int)m_earlyStoppingNumGenerations.getValue() : -1);
         cfg.setPopSize((int)m_popSizeSpinner.getValue());
         cfg.setMaxNumGenerations((int)m_maxNumGenerationsSpinner.getValue());
         cfg.setUseRandomSeed(m_useRandomSeedCheckBox.isSelected());
         cfg.setRandomSeed(Long.parseLong(m_randomSeedTextField.getText()));
+        cfg.setSurvivorsFraction((double)m_survivorsFractionSpinner.getValue());
         cfg.setCrossoverRate((double)m_crossoverRateSpinner.getValue());
         cfg.setMutationRate((double)m_mutationRateSpinner.getValue());
         cfg.setElitismRate((double)m_elitismRateSpinner.getValue());
@@ -273,30 +300,40 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
         final FeatureSelectionLoopStartSettings cfg = new FeatureSelectionLoopStartSettings();
         cfg.loadInDialog(settings, specs[0]);
         m_constantColumnsFilterPanel.loadConfiguration(cfg.getStaticColumnsFilterConfiguration(), specs[0]);
+        m_strategyComboBox.setSelectedItem(cfg.getStrategy());
 
         final boolean useFeatureThreshold = cfg.useNrFeaturesThreshold();
         m_useNrFeaturesThresholdCheckBox.setSelected(useFeatureThreshold);
-        // set only spinner value if the threshold is used
+        // only set spinner value if the threshold is used
         if (useFeatureThreshold) {
             m_nrFeaturesThresholdSpinner.setValue(cfg.getNrFeaturesThreshold());
         }
         final boolean useFeatureLowerBound = cfg.useNrFeaturesLowerBound();
         m_useNrFeaturesLowerBoundCheckBox.setSelected(useFeatureLowerBound);
-        // set only spinner value if the lower bound is used
+        // only set spinner value if the lower bound is used
         if (useFeatureLowerBound) {
             m_nrFeaturesLowerBoundSpinner.setValue(cfg.getNrFeaturesLowerBound());
         }
         final boolean useFeatureUpperBound = cfg.useNrFeaturesUpperBound();
         m_useNrFeaturesUpperBoundCheckBox.setSelected(useFeatureUpperBound);
-        // set only spinner value if the upper bound is used
+        // only set spinner value if the upper bound is used
         if (useFeatureUpperBound) {
             m_nrFeaturesUpperBoundSpinner.setValue(cfg.getNrFeaturesUpperBound());
         }
-        m_strategyComboBox.setSelectedItem(cfg.getStrategy());
+        final boolean useEarlyStopping = cfg.useEarlyStopping();
+        m_useEarlyStopping.setSelected(useEarlyStopping);
+        // only set spinner value if the early stopping is enabled
+        if (useEarlyStopping) {
+            m_earlyStoppingNumGenerations.setValue(cfg.getEarlyStopping());
+        }
         m_popSizeSpinner.setValue(cfg.getPopSize());
         m_maxNumGenerationsSpinner.setValue(cfg.getMaxNumGenerations());
         m_useRandomSeedCheckBox.setSelected(cfg.isUseRandomSeed());
         m_randomSeedTextField.setText(Long.toString(cfg.getRandomSeed()));
+        m_survivorsFractionSpinner.setValue(cfg.getSurvivorsFraction());
+        m_crossoverRateSpinner.setValue(cfg.getCrossoverRate());
+        m_mutationRateSpinner.setValue(cfg.getMutationRate());
+        m_elitismRateSpinner.setValue(cfg.getElitismRate());
         m_crossoverStrategyComboBox.setSelectedItem(cfg.getCrossoverStrategy());
         m_selectionStrategyComboBox.setSelectedItem(cfg.getSelectionStrategy());
     }
@@ -306,7 +343,7 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
         panel.setBorder(new TitledBorder(LineBorder.createGrayLineBorder(), strategyType.getDialogPanelTitle()));
         final GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 5, 5, 5);
-        gbc.anchor = GridBagConstraints.WEST;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
         gbc.weightx = 0.0;
         gbc.weighty = 0.0;
         gbc.fill = GridBagConstraints.HORIZONTAL;
@@ -333,15 +370,71 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
 
                 gbc.gridx = 0;
                 gbc.gridy++;
-                panel.add(new JLabel("Number of generations"), gbc);
+                panel.add(new JLabel("Max. number of generations"), gbc);
                 gbc.gridx++;
                 panel.add(m_maxNumGenerationsSpinner, gbc);
 
                 gbc.gridx = 0;
                 gbc.gridy++;
+                m_useRandomSeedCheckBox
+                    .setPreferredSize(new Dimension((int)m_useRandomSeedCheckBox.getPreferredSize().getWidth() + 83,
+                        (int)m_useRandomSeedCheckBox.getPreferredSize().getHeight()));
+                panel.add(m_useRandomSeedCheckBox, gbc);
+                gbc.gridx++;
+                m_randomSeedTextField
+                    .setPreferredSize(new Dimension((int)m_randomSeedTextField.getPreferredSize().getWidth() + 55,
+                        (int)m_randomSeedTextField.getPreferredSize().getHeight()));
+                panel.add(m_randomSeedTextField, gbc);
+
+                return panel;
+            case Sequential:
+                panel.add(m_useNrFeaturesThresholdCheckBox, gbc);
+                gbc.gridy++;
+                panel.add(new JLabel("Select threshold for number of features"), gbc);
+                gbc.gridx = 1;
+                panel.add(m_nrFeaturesThresholdSpinner, gbc);
+                gbc.weighty = 1;
+                gbc.gridy++;
+                panel.add(new JLabel(""));
+                return panel;
+            default:
+                throw new IllegalStateException("Unexpected strategy: " + strategyType.toString());
+        }
+    }
+
+    private JPanel getAdvancedSettingsPanel(final StrategyType strategyType) {
+        if (!strategyType.hasAdvancedSettings()) {
+            return new JPanel();
+        }
+        final JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBorder(
+            new TitledBorder(LineBorder.createGrayLineBorder(), "Advanced " + strategyType.getDialogPanelTitle()));
+        final GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.weightx = 0.0;
+        gbc.weighty = 0.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+
+        switch (strategyType) {
+            case Genetic:
                 panel.add(new JLabel("Selection strategy"), gbc);
                 gbc.gridx++;
                 panel.add(m_selectionStrategyComboBox, gbc);
+
+                gbc.gridx = 0;
+                gbc.gridy++;
+                panel.add(new JLabel("Fraction of survivors"), gbc);
+                gbc.gridx++;
+                panel.add(m_survivorsFractionSpinner, gbc);
+
+                gbc.gridx = 0;
+                gbc.gridy++;
+                panel.add(new JLabel("Elitism rate"), gbc);
+                gbc.gridx++;
+                panel.add(m_elitismRateSpinner, gbc);
 
                 gbc.gridx = 0;
                 gbc.gridy++;
@@ -363,65 +456,30 @@ public class FeatureSelectionLoopStartNodeDialogPane extends NodeDialogPane {
 
                 gbc.gridx = 0;
                 gbc.gridy++;
-                panel.add(new JLabel("Elitism rate"), gbc);
+                panel.add(m_useEarlyStopping, gbc);
+                gbc.gridy++;
+                final JLabel labelEarlyStopping = new JLabel("Number of generations without improvement");
+                panel.add(labelEarlyStopping, gbc);
+                gbc.gridx++;
+                panel.add(m_earlyStoppingNumGenerations, gbc);
+                m_useEarlyStopping.addChangeListener(l -> {
+                    boolean enabled = m_useEarlyStopping.isSelected();
+                    labelEarlyStopping.setEnabled(enabled);
+                    m_earlyStoppingNumGenerations.setEnabled(enabled);
+                });
+
+                // add two dummy labels to keep components on top left
                 gbc.gridx++;
                 gbc.weightx = 1;
-                panel.add(m_elitismRateSpinner, gbc);
-
-                gbc.gridx = 0;
+                panel.add(new JLabel(), gbc);
                 gbc.gridy++;
-                m_useRandomSeedCheckBox
-                    .setPreferredSize(new Dimension((int)m_useRandomSeedCheckBox.getPreferredSize().getWidth() + 83,
-                        (int)m_useRandomSeedCheckBox.getPreferredSize().getHeight()));
-                panel.add(m_useRandomSeedCheckBox, gbc);
-                gbc.gridx++;
-                m_randomSeedTextField
-                    .setPreferredSize(new Dimension((int)m_randomSeedTextField.getPreferredSize().getWidth() + 55,
-                        (int)m_randomSeedTextField.getPreferredSize().getHeight()));
-                panel.add(m_randomSeedTextField, gbc);
+                gbc.weighty = 1;
+                panel.add(new JLabel(), gbc);
 
                 return panel;
             default:
-                panel.add(m_useNrFeaturesThresholdCheckBox, gbc);
-                gbc.gridy += 1;
-                panel.add(new JLabel("Select threshold for number of features"), gbc);
-                gbc.gridx = 1;
-                gbc.weighty = 1;
-                panel.add(m_nrFeaturesThresholdSpinner, gbc);
-                return panel;
+                throw new IllegalStateException("Unexpected strategy: " + strategyType.toString());
         }
-    }
-
-    /**
-     * Card layout which adjusts the size of the panel to the content of the cards.
-     */
-    private static class AdjustingSizesCardLayout extends CardLayout {
-
-        private static final long serialVersionUID = 1L;
-
-        @Override
-        public Dimension preferredLayoutSize(final Container parent) {
-
-            final Component current = findCurrentComponent(parent);
-            if (current != null) {
-                final Insets insets = parent.getInsets();
-                final Dimension pref = current.getPreferredSize();
-                pref.width += insets.left + insets.right;
-                pref.height += insets.top + insets.bottom;
-                return pref;
-            }
-            return super.preferredLayoutSize(parent);
-        }
-
-        private static Component findCurrentComponent(final Container parent) {
-            for (final Component comp : parent.getComponents()) {
-                if (comp.isVisible()) {
-                    return comp;
-                }
-            }
-            return null;
-        }
-
     }
 
 }

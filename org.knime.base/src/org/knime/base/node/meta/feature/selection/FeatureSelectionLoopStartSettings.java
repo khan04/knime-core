@@ -90,11 +90,15 @@ public class FeatureSelectionLoopStartSettings {
 
     private static final String CFG_RANDOM_SEED = "randomSeed";
 
+    private static final String CFG_SURVIVORS_FRACTION = "survivorsFraction";
+
     private static final String CFG_CROSSOVER_RATE = "crossoverRate";
 
     private static final String CFG_MUTATION_RATE = "mutationRate";
 
     private static final String CFG_ELITISM_RATE = "elitismRate";
+
+    private static final String CFG_EARLY_STOPPING = "earlyStopping";
 
     // ===== Default values =====
 
@@ -109,13 +113,13 @@ public class FeatureSelectionLoopStartSettings {
 
     // Genetic Algorithm
 
-    // -1 stands for no lower bound!
+    // -1 stands for no upper bound!
     private static final int DEF_NR_FEATURES_LOWER_BOUND = -1;
 
     // -1 stands for no upper bound!
     private static final int DEF_NR_FEATURES_UPPER_BOUND = -1;
 
-    private static final int DEF_POP_SIZE = 15;
+    private static final int DEF_POP_SIZE = 20;
 
     private static final int DEF_MAX_NUM_GENERATIONS = 10;
 
@@ -123,11 +127,15 @@ public class FeatureSelectionLoopStartSettings {
 
     private static final boolean DEF_USE_RANODM_SEED = false;
 
+    private static final double DEF_SURVIVORS_FRACTION = 0.4;
+
     private static final double DEF_CROSSOVER_RATE = 0.6;
 
     private static final double DEF_MUTATION_RATE = 0.01;
 
     private static final double DEF_ELITISM_RATE = 0.1;
+
+    private static final int DEF_EARLY_STOPPING = 3;
 
     private static final CrossoverStrategy DEF_CROSSOVER_STRATEGY = CrossoverStrategy.UNIFORM_CROSSOVER;
 
@@ -157,16 +165,21 @@ public class FeatureSelectionLoopStartSettings {
 
     private long m_randomSeed = DEF_RANDOM_SEED;
 
+    private double m_survivorsFraction = DEF_SURVIVORS_FRACTION;
+
     private double m_crossoverRate = DEF_CROSSOVER_RATE;
 
     private double m_mutationRate = DEF_MUTATION_RATE;
 
     private double m_elitismRate = DEF_ELITISM_RATE;
 
+    private int m_earlyStopping = DEF_EARLY_STOPPING;
+
     private CrossoverStrategy m_crossoverStrategy = DEF_CROSSOVER_STRATEGY;
 
     private SelectionStrategy m_selectionStrategy = DEF_SELECTION_STRATEGY;
 
+    @SuppressWarnings("unchecked")
     private DataColumnSpecFilterConfiguration m_constantColumnsFilterConfig = new DataColumnSpecFilterConfiguration(
         CFG_CONSTANT_COLUMNS_FILTER_CONFIG, new DataTypeColumnFilter(DataValue.class));
 
@@ -314,6 +327,20 @@ public class FeatureSelectionLoopStartSettings {
     }
 
     /**
+     * @return the survivorsFraction
+     */
+    public double getSurvivorsFraction() {
+        return m_survivorsFraction;
+    }
+
+    /**
+     * @param survivorsFraction the survivorsFraction to set
+     */
+    public void setSurvivorsFraction(final double survivorsFraction) {
+        m_survivorsFraction = survivorsFraction;
+    }
+
+    /**
      * @return the crossoverRate
      */
     public double getCrossoverRate() {
@@ -353,6 +380,27 @@ public class FeatureSelectionLoopStartSettings {
      */
     public void setElitismRate(final double elitismRate) {
         m_elitismRate = elitismRate;
+    }
+
+    /**
+     * @return the earlyStopping
+     */
+    public int getEarlyStopping() {
+        return m_earlyStopping;
+    }
+
+    /**
+     * @param earlyStopping the earlyStopping to set
+     */
+    public void setEarlyStopping(final int earlyStopping) {
+        m_earlyStopping = earlyStopping;
+    }
+
+    /**
+     * @return true if a upper bound for the number of features is set
+     */
+    public boolean useEarlyStopping() {
+        return m_earlyStopping > 0;
     }
 
     /**
@@ -400,9 +448,11 @@ public class FeatureSelectionLoopStartSettings {
         settings.addInt(CFG_MAX_NUM_GENERATIONS, m_maxNumGenerations);
         settings.addBoolean(CFG_USE_RANDOM_SEED, m_useRandomSeed);
         settings.addLong(CFG_RANDOM_SEED, m_randomSeed);
+        settings.addDouble(CFG_SURVIVORS_FRACTION, m_survivorsFraction);
         settings.addDouble(CFG_CROSSOVER_RATE, m_crossoverRate);
         settings.addDouble(CFG_MUTATION_RATE, m_mutationRate);
         settings.addDouble(CFG_ELITISM_RATE, m_elitismRate);
+        settings.addInt(CFG_EARLY_STOPPING, m_earlyStopping);
     }
 
     /**
@@ -435,9 +485,11 @@ public class FeatureSelectionLoopStartSettings {
         m_maxNumGenerations = settings.getInt(CFG_MAX_NUM_GENERATIONS, DEF_MAX_NUM_GENERATIONS);
         m_useRandomSeed = settings.getBoolean(CFG_USE_RANDOM_SEED, DEF_USE_RANODM_SEED);
         m_randomSeed = settings.getLong(CFG_RANDOM_SEED, DEF_RANDOM_SEED);
+        m_survivorsFraction = settings.getDouble(CFG_SURVIVORS_FRACTION, DEF_SURVIVORS_FRACTION);
         m_crossoverRate = settings.getDouble(CFG_CROSSOVER_RATE, DEF_CROSSOVER_RATE);
         m_mutationRate = settings.getDouble(CFG_MUTATION_RATE, DEF_MUTATION_RATE);
         m_elitismRate = settings.getDouble(CFG_ELITISM_RATE, DEF_ELITISM_RATE);
+        m_earlyStopping = settings.getInt(CFG_EARLY_STOPPING,DEF_EARLY_STOPPING);
     }
 
     /**
@@ -448,19 +500,31 @@ public class FeatureSelectionLoopStartSettings {
      */
     public void loadInModel(final NodeSettingsRO settings) throws InvalidSettingsException {
         m_strategy = Strategy.load(settings);
-        m_crossoverStrategy = CrossoverStrategy.load(settings);
-        m_selectionStrategy = SelectionStrategy.load(settings);
-
         m_constantColumnsFilterConfig.loadConfigurationInModel(settings);
         m_nrFeaturesThreshold = settings.getInt(CFG_NR_FEATURES_THRESHOLD);
-        m_nrFeaturesLowerBound = settings.getInt(CFG_NR_FEATURES_LOWER_BOUND);
-        m_nrFeaturesUpperBound = settings.getInt(CFG_NR_FEATURES_UPPER_BOUND);
-        m_popSize = settings.getInt(CFG_POP_SIZE);
-        m_maxNumGenerations = settings.getInt(CFG_MAX_NUM_GENERATIONS);
-        m_useRandomSeed = settings.getBoolean(CFG_USE_RANDOM_SEED);
-        m_randomSeed = settings.getLong(CFG_RANDOM_SEED);
-        m_crossoverRate = settings.getDouble(CFG_CROSSOVER_RATE);
-        m_mutationRate = settings.getDouble(CFG_MUTATION_RATE);
-        m_elitismRate = settings.getDouble(CFG_ELITISM_RATE);
+
+        // following fields have been added later (AP-10340) and load a default, if no setting is available,
+        // for the sake of backwards compatibility
+        try {
+            m_crossoverStrategy = CrossoverStrategy.load(settings);
+        } catch (InvalidSettingsException e) {
+            m_crossoverStrategy = DEF_CROSSOVER_STRATEGY;
+        }
+        try {
+            m_selectionStrategy = SelectionStrategy.load(settings);
+        } catch (InvalidSettingsException e) {
+            m_selectionStrategy = DEF_SELECTION_STRATEGY;
+        }
+        m_nrFeaturesLowerBound = settings.getInt(CFG_NR_FEATURES_LOWER_BOUND, DEF_NR_FEATURES_LOWER_BOUND);
+        m_nrFeaturesUpperBound = settings.getInt(CFG_NR_FEATURES_UPPER_BOUND, DEF_NR_FEATURES_UPPER_BOUND);
+        m_popSize = settings.getInt(CFG_POP_SIZE, DEF_POP_SIZE);
+        m_maxNumGenerations = settings.getInt(CFG_MAX_NUM_GENERATIONS, DEF_MAX_NUM_GENERATIONS);
+        m_useRandomSeed = settings.getBoolean(CFG_USE_RANDOM_SEED, DEF_USE_RANODM_SEED);
+        m_randomSeed = settings.getLong(CFG_RANDOM_SEED, DEF_RANDOM_SEED);
+        m_survivorsFraction = settings.getDouble(CFG_SURVIVORS_FRACTION, DEF_SURVIVORS_FRACTION);
+        m_crossoverRate = settings.getDouble(CFG_CROSSOVER_RATE, DEF_CROSSOVER_RATE);
+        m_mutationRate = settings.getDouble(CFG_MUTATION_RATE, DEF_MUTATION_RATE);
+        m_elitismRate = settings.getDouble(CFG_ELITISM_RATE, DEF_ELITISM_RATE);
+        m_earlyStopping = settings.getInt(CFG_EARLY_STOPPING,DEF_EARLY_STOPPING);
     }
 }

@@ -153,9 +153,9 @@ public class FeatureSelectionStrategies {
             case GeneticAlgorithm:
                 return new GeneticStrategy(settings.getNrFeaturesLowerBound(), settings.getNrFeaturesUpperBound(),
                     settings.getPopSize(), settings.getMaxNumGenerations(), settings.isUseRandomSeed(),
-                    settings.getRandomSeed(), settings.getCrossoverRate(), settings.getMutationRate(),
-                    settings.getElitismRate(), settings.getSelectionStrategy(), settings.getCrossoverStrategy(),
-                    featureColumns);
+                    settings.getRandomSeed(), settings.getSurvivorsFraction(), settings.getCrossoverRate(),
+                    settings.getMutationRate(), settings.getElitismRate(), settings.getEarlyStopping(),
+                    settings.getSelectionStrategy(), settings.getCrossoverStrategy(), featureColumns);
             default:
                 throw new IllegalArgumentException("The FeatureSelectionStrategy \"" + strategy + "\" is unknown.");
         }
@@ -172,19 +172,22 @@ public class FeatureSelectionStrategies {
             /**
              * FFS and BFE
              */
-            Sequential("Sequential Algorithm Settings"),
+            Sequential("Sequential Algorithm Settings", false),
             /**
              * Genetic Algorithm
              */
-            Genetic("Genetic Algorithm Settings");
+            Genetic("Genetic Algorithm Settings", true);
 
         private final String m_dialogPanelTitle;
+
+        private final boolean m_hasAdvancedSettings;
 
         /**
          *
          */
-        private StrategyType(final String dialogPanelTitle) {
+        private StrategyType(final String dialogPanelTitle, final boolean hasAdvancedSettings) {
             m_dialogPanelTitle = dialogPanelTitle;
+            m_hasAdvancedSettings = hasAdvancedSettings;
         }
 
         /**
@@ -192,6 +195,13 @@ public class FeatureSelectionStrategies {
          */
         public String getDialogPanelTitle() {
             return m_dialogPanelTitle;
+        }
+
+        /**
+         * @return the hasAdvancedSettings
+         */
+        public boolean hasAdvancedSettings() {
+            return m_hasAdvancedSettings;
         }
     }
 

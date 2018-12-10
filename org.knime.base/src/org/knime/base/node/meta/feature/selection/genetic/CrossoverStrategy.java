@@ -125,7 +125,7 @@ public enum CrossoverStrategy {
      * @return the new strategy object
      * @throws IllegalArgumentException if the strategy is invalid
      */
-    public static Crossover<BitGene, Double> getSelector(final CrossoverStrategy strategy, final double crossoverRate) {
+    public static Crossover<BitGene, Double> getCrossover(final CrossoverStrategy strategy, final double crossoverRate) {
         switch (strategy) {
             case UNIFORM_CROSSOVER:
                 return new UniformCrossover<>(crossoverRate);

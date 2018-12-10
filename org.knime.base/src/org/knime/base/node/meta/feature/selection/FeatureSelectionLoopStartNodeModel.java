@@ -120,6 +120,8 @@ public class FeatureSelectionLoopStartNodeModel extends NodeModel implements Loo
             }
         }
         if (m_iteration == 0) {
+            // dispose already created feature selectors to cancel possibly started genetic algorithm thread
+            onDispose();
             // get feature selector
             try {
                 final AbstractColumnHandler columnHandler =

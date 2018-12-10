@@ -64,6 +64,7 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 
 import org.knime.base.node.meta.feature.selection.FeatureSelectionStrategy;
+import org.knime.core.node.util.CheckUtils;
 
 import io.jenetics.BitChromosome;
 import io.jenetics.BitGene;
@@ -74,7 +75,7 @@ import io.jenetics.Optimize;
 import io.jenetics.Selector;
 import io.jenetics.engine.Engine;
 import io.jenetics.engine.EvolutionResult;
-import io.jenetics.engine.EvolutionStart;
+import io.jenetics.engine.Limits;
 import io.jenetics.util.Factory;
 import io.jenetics.util.RandomRegistry;
 
@@ -88,71 +89,69 @@ import io.jenetics.util.RandomRegistry;
  */
 public class GeneticStrategy implements FeatureSelectionStrategy {
 
+    private static final Integer POISON_PILL = -1;
+
     private final int m_numIterations;
 
     private boolean m_isMinimize;
 
     private boolean m_continueLoop = true;
 
-    private final Evaluator m_evaluator = new Evaluator();
-
     private final ExecutorService m_executor;
 
-    private Engine<BitGene, Double> m_engine;
+    private final Evaluator m_evaluator = new Evaluator();
 
-    private boolean m_isInterrupted = false;
+    private final Engine<BitGene, Double> m_engine;
 
+    // if not empty, the genetic algorithm waits for a genotype to be scored
     private final BlockingQueue<Integer> m_queueGenotypeReadyToScore;
 
+    // if not empty, the loop start node waits for a new genotype to score
     private final BlockingQueue<Integer> m_queueGenotypeRequested;
 
+    // if not empty, the requested genotype has been scored and the genetic algorithm can continue
     private final BlockingQueue<Integer> m_queueScoreReceived;
 
-    private static final Integer POISON_PILL = -1;
-
     /**
-     * Constructor. Starts the thread for the genetic algorithm already to be able to give an output of the first
-     * selected features during configure.
+     * Constructor. Starts the thread for the genetic algorithm to be able to give an output of the first selected
+     * feature set during configure.
      *
-     * @param subSetSize max number of selected features, is <= 0 if undefined
+     * @param subsetLowerBound the minimum number of selected features, is <= 0 if undefined
+     * @param subsetUpperBound the maximum number of selected features, is <= 0 if undefined
      * @param popSize population size
      * @param numGenerations max number of generations
      * @param useSeed if seed should be used
      * @param seed the seed
+     * @param survivorsFraction the survivors fraction
      * @param crossoverRate the crossover rate
      * @param mutationRate the mutation rate
      * @param elitismRate the elitism rate
+     * @param earlyStopping the number of generations for early stopping, is <= 0 if disabled
      * @param selectionStrategy the selection strategy
      * @param crossoverStrategy the crossover strategy
      * @param features ids of the features
      *
      */
     public GeneticStrategy(final int subsetLowerBound, final int subsetUpperBound, final int popSize,
-        final int numGenerations, final boolean useSeed, final long seed, final double crossoverRate,
-        final double mutationRate, final double elitismRate, final SelectionStrategy selectionStrategy,
-        final CrossoverStrategy crossoverStrategy, final List<Integer> features) {
-        //        if (features.size() < 2) {
-        //            throw new IllegalArgumentException(
-        //                "In order to use a genetic algorithm, the number of features must be at least 2.");
-        //        }
-        if (subsetLowerBound > 0 && subsetUpperBound > 0 && subsetLowerBound > subsetUpperBound) {
-            throw new IllegalArgumentException(
-                "The lower bound of number of features must not be greater than the upper bound!");
-        }
-        if (subsetLowerBound > features.size()) {
-            throw new IllegalArgumentException(
-                "The lower bound of number of features must not be greater than the actual number of features!");
-        }
-        // probably it's going to be less, this is just an upper bound
-        m_numIterations = numGenerations * popSize;
+        final int numGenerations, final boolean useSeed, final long seed, final double survivorsFraction,
+        final double crossoverRate, final double mutationRate, final double elitismRate, final int earlyStopping,
+        final SelectionStrategy selectionStrategy, final CrossoverStrategy crossoverStrategy,
+        final List<Integer> features) {
+        CheckUtils.checkArgument(!(subsetLowerBound > 0 && subsetUpperBound > 0 && subsetLowerBound > subsetUpperBound),
+            "The lower bound of number of features must not be greater than the upper bound!");
+        CheckUtils.checkArgument(subsetLowerBound <= features.size(),
+            "The lower bound of number of features must not be greater than the actual number of features!");
+        CheckUtils.checkArgument(numGenerations > 0, "The number of generations must be at least 1!");
+        CheckUtils.checkArgument(popSize >= 2, "The population size must be at least 2!");
+        // probably it's going to be less, this is just an upper bound (+1, because initial generation is generation 0)
+        m_numIterations = (numGenerations + 1) * popSize;
 
         m_queueGenotypeReadyToScore = new ArrayBlockingQueue<>(1);
         m_queueScoreReceived = new ArrayBlockingQueue<>(1);
         m_queueGenotypeRequested = new ArrayBlockingQueue<>(1);
         try {
-            //            System.out.println("Init; request...");
+            // request the first genotype
             m_queueGenotypeRequested.put(0);
-            //            System.out.println("Init; requested");
         } catch (InterruptedException e1) {
             throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e1);
         }
@@ -163,6 +162,41 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
         } else {
             random = new Random();
         }
+
+        // 1.) Define the genotype (factory) suitable for the problem.
+        final double probOfTrues = initializationProbability(subsetLowerBound, subsetUpperBound, features.size());
+        final Factory<Genotype<BitGene>> gtf = Genotype.of(BitChromosome.of(features.size(), probOfTrues));
+
+        // 2.) Define a validator for the genotype which ensures the maximal number of selected features.
+        final Predicate<? super Genotype<BitGene>> validator = gt -> {
+            final int bitCount = gt.get(0).as(BitChromosome.class).bitCount();
+            if (subsetLowerBound <= 0 && subsetUpperBound <= 0) {
+                return bitCount > 1;
+            }
+            if (subsetLowerBound > 0 && subsetUpperBound > 0) {
+                return bitCount >= subsetLowerBound && bitCount <= subsetUpperBound;
+            }
+            if (subsetLowerBound > 0) {
+                return bitCount >= subsetLowerBound;
+            }
+            // if subsetUpperBound > 0
+            return bitCount > 0 && bitCount <= subsetUpperBound;
+        };
+
+        // 3.) Create the execution environment.
+        m_engine = RandomRegistry.with(new Random(random.nextLong()), f -> {
+            return Engine.builder(m_evaluator, gtf).executor(Runnable::run).populationSize(popSize)
+                .alterers(CrossoverStrategy.getCrossover(crossoverStrategy, crossoverRate), new Mutator<>(mutationRate))
+                // most likely we don't know yet whether to minimize oder maximize, must be changed
+                // later using reflection (see #setIsMinimize)
+                .optimize(m_isMinimize ? Optimize.MINIMUM : Optimize.MAXIMUM)
+                // use elitism, if specified, only for the selection of the survivors
+                .survivorsFraction(survivorsFraction)
+                .survivorsSelector(selector(selectionStrategy, (int)(elitismRate * popSize + 0.5)))
+                .offspringSelector(selector(selectionStrategy, 0))
+                // after 100 retries, the feature subset boundaries will be ignored
+                .genotypeValidator(validator).individualCreationRetries(100).build();
+        });
 
         /*
          * This thread will run the genetic algorithm (GA) which will then run in parallel with the workflow thread.
@@ -175,55 +209,20 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
             @Override
             public void run() {
                 try {
-                    // 1.) Define the genotype (factory) suitable for the problem.
-                    final double probOfTrues =
-                        getInitializationProbability(subsetLowerBound, subsetUpperBound, features.size());
-                    final Factory<Genotype<BitGene>> gtf = Genotype.of(BitChromosome.of(features.size(), probOfTrues));
-
-                    // 2.) Define a validator for the genotype which ensures the maximal number of selected features.
-                    final Predicate<? super Genotype<BitGene>> validator = gt -> {
-                        final int bitCount = gt.get(0).as(BitChromosome.class).bitCount();
-                        if (subsetLowerBound <= 0 && subsetUpperBound <= 0) {
-                            return bitCount > 1;
-                        }
-                        if (subsetLowerBound > 0 && subsetUpperBound > 0) {
-                            return bitCount >= subsetLowerBound && bitCount <= subsetUpperBound;
-                        }
-                        if (subsetLowerBound > 0) {
-                            return bitCount >= subsetLowerBound;
-                        }
-                        // subsetUpperBound > 0
-                        return bitCount <= subsetUpperBound;
-                    };
-
-                    // 3.) Create the execution environment.
-                    m_engine = RandomRegistry.with(new Random(random.nextLong()), f -> {
-                        return Engine.builder(m_evaluator, gtf).executor(Runnable::run).populationSize(popSize)
-                            .alterers(CrossoverStrategy.getSelector(crossoverStrategy, crossoverRate),
-                                new Mutator<>(mutationRate))
-                            // most likely we don't know yet whether to minimize oder maximize, must be changed
-                            // later using reflection (see #setIsMinimize)
-                            .optimize(m_isMinimize ? Optimize.MINIMUM : Optimize.MAXIMUM)
-                            .selector(getSelector(selectionStrategy, (int)(elitismRate * popSize + 0.5)))
-                            // after 100 retries, the max subset size will be ignored
-                            .genotypeValidator(validator).individualCreationRetries(100).build();
-                    });
 
                     // 4.) Start the execution (evolution) and collect the result.
-                    EvolutionResult<BitGene, Double> result = RandomRegistry.with(new Random(random.nextLong()),
-                        f -> m_engine.stream().limit(numGenerations).collect(EvolutionResult.toBestEvolutionResult()));
-                    RandomRegistry.with(new Random(random.nextLong()),
-                        f -> m_engine.stream(EvolutionStart.of(result.getPopulation(), result.getGeneration()))
-                            .limit(numGenerations - 1).collect(EvolutionResult.toBestEvolutionResult()));
-
-                    //                    System.out.println("GA finished; receive...");
-                    m_queueGenotypeRequested.take();
-                    //                    System.out.println("GA finished; received");
-                    //                    System.out.println("Wait GA finisihed; put false ReadyToScore...");
-                    m_queueGenotypeReadyToScore.put(0);
-                    //                    System.out.println("Done GA finisihed; put false ReadyToScore");
+                    RandomRegistry.with(new Random(random.nextLong()), f -> m_engine.stream()
+                        // limit by steady fitness (early stopping) if enabled
+                        .limit(earlyStopping > 0 ? Limits.bySteadyFitness(earlyStopping) : Limits.infinite())
+                        // always limit by max. number of generations
+                        .limit(numGenerations)
+                        // collect results
+                        .collect(EvolutionResult.toBestEvolutionResult()));
 
                     m_continueLoop = false;
+                    // take care that last call of #finishRound is not blocked
+                    m_queueGenotypeRequested.take();
+                    m_queueGenotypeReadyToScore.put(0);
                 } catch (RuntimeException e) {
                     // dispose the streaming thread, throw the exception
                     onDispose();
@@ -246,8 +245,10 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
         m_executor.execute(runnable);
     }
 
-    private static Selector<BitGene, Double> getSelector(final SelectionStrategy selectionStrategy,
-        final int eliteCount) {
+    /**
+     * Returns the Selector according to user settings.
+     */
+    private static Selector<BitGene, Double> selector(final SelectionStrategy selectionStrategy, final int eliteCount) {
         final Selector<BitGene, Double> nonElitistSelector = SelectionStrategy.getSelector(selectionStrategy);
         final Selector<BitGene, Double> selector;
         if (eliteCount > 0) {
@@ -258,21 +259,29 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
         return selector;
     }
 
-    private double getInitializationProbability(final int subsetLowerBound, final int subsetUpperBound,
+    /**
+     * Returns the probability used to initialize the genotypes of the first population regarding the defined bounds.
+     */
+    private static double initializationProbability(final int subsetLowerBound, final int subsetUpperBound,
         final int numFeatures) {
-        final int subsetSize;
+        // if no bounds are set, return 0.5
         if (subsetLowerBound <= 0 && subsetUpperBound <= 0) {
             return 0.5;
         } else {
+            // if one or two bounds are set, define the mean number of possibly selected features
+            final double meanSize;
             if (subsetLowerBound <= 0 && subsetUpperBound > 0) {
-                subsetSize = numFeatures + subsetLowerBound;
+                // if just an upper bound is set, the mean is in the middle of 0 and the upper bound
+                meanSize = (double)subsetUpperBound / 2;
             } else if (subsetLowerBound > 0 && subsetUpperBound <= 0) {
-                subsetSize = subsetUpperBound;
+                // if just a lower bound is defined, the mean is the middle of the lower bound the number of features
+                meanSize = (double)(numFeatures + subsetLowerBound) / 2;
             } else {
-                subsetSize = subsetLowerBound + subsetUpperBound;
+                // if lower and upper bound is defined, the mean is in the middle of those bounds
+                meanSize = (double)(subsetLowerBound + subsetUpperBound) / 2;
             }
-            // set it to get subsets of approximately the half size of the max size
-            return (subsetSize / 2) / numFeatures;
+            // return a probability which leads to subsets of approximately mean size
+            return meanSize / numFeatures;
         }
     }
 
@@ -300,13 +309,10 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
      */
     @Override
     public void addScore(final double score) {
-        //        System.out.println(score);
         m_evaluator.setScore(score);
-
         try {
-            //            System.out.println("set score " + score + " ...");
+            // a new score has been added
             m_queueScoreReceived.put(0);
-            //            System.out.println("score " + score + " set");
         } catch (InterruptedException e) {
             throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e);
         }
@@ -320,14 +326,15 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
         try {
             // The only way to change whether to minimize or maximize after the genetic algorithm has been started
             // is reflection. Since we know how to optimize not before the Loop End has been configured and the genetic
-            // algorithm needs to be started during configure of the Loop Start, the optimization method may change.
+            // algorithm needs to be started during configure of the Loop Start to give out the first feature set, the
+            // optimization method may change.
             final Field f = m_engine.getClass().getDeclaredField("_optimize");
             f.setAccessible(true);
-            // Remove final modifier
+            // Remove final modifier.
             final Field modifiersField = Field.class.getDeclaredField("modifiers");
             modifiersField.setAccessible(true);
             modifiersField.setInt(f, f.getModifiers() & ~Modifier.FINAL);
-            // Set optimization method
+            // Set optimization method.
             f.set(m_engine, isMinimize ? Optimize.MINIMUM : Optimize.MAXIMUM);
             m_isMinimize = isMinimize;
         } catch (NoSuchFieldException | SecurityException | IllegalArgumentException | IllegalAccessException e) {
@@ -406,13 +413,10 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
     @Override
     public void finishRound() {
         try {
-            //            System.out.println("Next; request...");
+            // request a new genotype
             m_queueGenotypeRequested.put(0);
-            //            System.out.println("Next; requested");
-            //            System.out.println("-------------------");
-            //            System.out.println("Next; receive...");
+            // wait until the next genotype is ready
             m_queueGenotypeReadyToScore.take();
-            //            System.out.println("Next; received");
         } catch (InterruptedException e) {
             throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e);
         }
@@ -432,57 +436,54 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
         m_queueGenotypeRequested.offer(POISON_PILL);
     }
 
+    /**
+     * Evaluates genotypes and assigns their fitness.
+     */
     private final class Evaluator implements Function<Genotype<BitGene>, Double> {
 
         // caches the scores of already scored feature subsets
-        private final HashMap<Integer, Double> m_scoreLookUp = new HashMap<>();
+        private final HashMap<Integer, Double> m_scoreLookUpMap = new HashMap<>();
 
-        private Double m_score;
-
-        private List<Integer> m_current;
+        private final List<Integer> m_currentGenotype = new ArrayList<>();
 
         private boolean m_isInitialized = false;
 
-        private final BlockingQueue<Boolean> queueIsInitialized = new ArrayBlockingQueue<>(1);
+        private boolean m_isInterrupted = false;
+
+        private Double m_score;
 
         /**
          * {@inheritDoc}
          */
         @Override
-        public synchronized Double apply(final Genotype<BitGene> genotype) {
+        public Double apply(final Genotype<BitGene> genotype) {
             // if the running node has been reseted or disposed, simply return 0 to let the thread terminate quickly
             if (m_isInterrupted) {
-                return 0d;
+                return stopAndReturn();
             }
 
             // If the same genotype has already been processed before, return the cached score.
             // There is a small chance that a different genotype has the same hash code and gets labeled with the wrong
             // score, but it will be altered sooner or later by the GA, i.e., it will not affect the results too much.
             final int hashCode = genotype.get(0).as(BitChromosome.class).toBitSet().hashCode();
-            if (m_scoreLookUp.containsKey(hashCode)) {
-                return m_scoreLookUp.get(hashCode);
+            if (m_scoreLookUpMap.containsKey(hashCode)) {
+                return m_scoreLookUpMap.get(hashCode);
             }
 
             try {
-                //                System.out.println("Apply; wait for request...");
+                // wait until a new genotype is requested
                 if (m_queueGenotypeRequested.take().equals(POISON_PILL)) {
-                    System.out.println("STOP THREAD 1");
                     return stopAndReturn();
                 }
-                //                System.out.println("Apply; got request");
                 setCurrent(genotype);
-                //                System.out.println("Apply; give...");
+                // signal that new genotype is ready to score
                 m_queueGenotypeReadyToScore.put(0);
-                //                System.out.println("Apply; given");
-                queueIsInitialized.offer(true);
 
-                //                System.out.println("Apply; wait for score...");
+                // wait for the score
                 if (m_queueScoreReceived.take().equals(POISON_PILL)) {
-                    System.out.println("STOP THREAD 2");
                     return stopAndReturn();
                 }
-                //                System.out.println("Apply; score " + m_score + " received");
-                m_scoreLookUp.put(hashCode, m_score);
+                m_scoreLookUpMap.put(hashCode, m_score);
                 return m_score;
             } catch (InterruptedException e) {
                 throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e);
@@ -495,11 +496,11 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
             return 0d;
         }
 
-        private synchronized void setCurrent(final Genotype<BitGene> genotype) {
-            m_current = new ArrayList<>();
+        private void setCurrent(final Genotype<BitGene> genotype) {
+            m_currentGenotype.clear();
             for (int i = 0; i < genotype.getChromosome(0).length(); i++) {
                 if (genotype.getChromosome(0).getGene(i).booleanValue()) {
-                    m_current.add(i);
+                    m_currentGenotype.add(i);
                 }
             }
         }
@@ -509,18 +510,16 @@ public class GeneticStrategy implements FeatureSelectionStrategy {
          */
         private List<Integer> getCurrent() {
             // wait before the initial genotype is set before the Loop Start can ask for the first feature subset
+            // m_queueGenotypeReadyToScore will be taken in this function only in the first iteration, afterwards in #finishRound
             if (!m_isInitialized) {
                 try {
-                    queueIsInitialized.take();
                     m_isInitialized = true;
-                    //                    System.out.println("Next; receive initial...");
                     m_queueGenotypeReadyToScore.take();
-                    //                    System.out.println("Next; received initial");
                 } catch (InterruptedException e) {
                     throw new IllegalStateException("The genetic algorithm thread has been interrupted!", e);
                 }
             }
-            return new ArrayList<>(m_current);
+            return new ArrayList<>(m_currentGenotype);
         }
 
         /**
